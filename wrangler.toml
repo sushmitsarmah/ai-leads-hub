@@ -1,0 +1,16 @@
+name = "ai-leads-api"
+main = "worker/index.ts"
+compatibility_date = "2026-10-01"
+
+[triggers]
+crons = ["0 6 * * *"] # Runs everyday at 06:00 UTC
+
+[[d1_databases]]
+binding = "ai_leads_db"
+database_name = "ai-leads-db"
+database_id = "f67f1a93-da83-4239-a136-9ad626881d43"
+
+[vars]
+AUTH_EMAIL = "sushmitsarmah@gmail.com"
+AUTH_PASSWORD = "_M5p58X3EnQjAEg6r2GYxw"
+SESSION_SECRET = "sec_key_77a9b0c24e6819d45e0f"
