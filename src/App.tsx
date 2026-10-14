@@ -24,6 +24,7 @@ export interface Lead {
   'Website / Careers URL': string;
   'Tech Stack': string;
   'Overview': string;
+  'Stage'?: string;
 }
 
 const API_BASE = 'https://ai-leads-api.sushmitsarmah.workers.dev';
@@ -40,6 +41,7 @@ export default function App() {
   const [scraping, setScraping] = createSignal(false);
   const [search, setSearch] = createSignal('');
   const [selectedStack, setSelectedStack] = createSignal('ALL');
+  const [stageFilter, setStageFilter] = createSignal<'ALL' | 'SEED' | 'HIRING'>('ALL');
   const [remoteOnly, setRemoteOnly] = createSignal(false);
   const [selectedLead, setSelectedLead] = createSignal<Lead | null>(null);
   const [copiedEmail, setCopiedEmail] = createSignal<string | null>(null);
@@ -207,6 +209,7 @@ export default function App() {
     const q = search().toLowerCase().trim();
     const st = selectedStack();
     const ro = remoteOnly();
+    const sf = stageFilter();
 
     return leads().filter((item) => {
       const matchesSearch =
@@ -226,7 +229,17 @@ export default function App() {
         item['Location / Remote'].toLowerCase().includes('remote') ||
         item['Location / Remote'].toLowerCase().includes('worldwide');
 
-      return matchesSearch && matchesStack && matchesRemote;
+      const isSeed =
+        (item['Stage'] || '').includes('Seed') ||
+        (item['Overview'] || '').toLowerCase().includes('seed') ||
+        (item['Position'] || '').toLowerCase().includes('seed');
+
+      const matchesStage =
+        sf === 'ALL' ||
+        (sf === 'SEED' && isSeed) ||
+        (sf === 'HIRING' && !isSeed);
+
+      return matchesSearch && matchesStack && matchesRemote && matchesStage;
     });
   });
 
@@ -358,10 +371,23 @@ export default function App() {
                 </p>
               </div>
 
-              <div class="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-zinc-800">
-                <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
-                  <span class="text-xs text-zinc-400">Remote / Worldwide</span>
-                  <p class="text-lg font-bold font-mono text-emerald-400 mt-0.5">
+              <div class="grid grid-cols-3 gap-2.5 mt-4 pt-4 border-t border-zinc-800">
+                <div class="bg-emerald-950/30 border border-emerald-800/40 rounded-xl p-3 flex flex-col justify-between">
+                  <span class="text-[11px] font-semibold text-emerald-400">🌱 Seed Stage</span>
+                  <p class="text-xl font-bold font-mono text-emerald-300 mt-1">
+                    {
+                      leads().filter(
+                        (l) =>
+                          (l['Stage'] || '').includes('Seed') ||
+                          (l['Overview'] || '').toLowerCase().includes('seed') ||
+                          (l['Position'] || '').toLowerCase().includes('seed')
+                      ).length
+                    }
+                  </p>
+                </div>
+                <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex flex-col justify-between">
+                  <span class="text-[11px] text-zinc-400">Remote / Worldwide</span>
+                  <p class="text-xl font-bold font-mono text-cyan-400 mt-1">
                     {
                       leads().filter(
                         (l) =>
@@ -371,9 +397,9 @@ export default function App() {
                     }
                   </p>
                 </div>
-                <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
-                  <span class="text-xs text-zinc-400">Rust / Systems</span>
-                  <p class="text-lg font-bold font-mono text-cyan-400 mt-0.5">
+                <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex flex-col justify-between">
+                  <span class="text-[11px] text-zinc-400">Rust / Systems</span>
+                  <p class="text-xl font-bold font-mono text-indigo-400 mt-1">
                     {
                       leads().filter((l) =>
                         (l['Tech Stack'] || '').toLowerCase().includes('rust')
@@ -396,7 +422,7 @@ export default function App() {
           </div>
 
           {/* Filter Toolbar */}
-          <div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+          <div class="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
             <div class="flex flex-1 items-center gap-3 min-w-[280px]">
               <div class="relative w-full max-w-md">
                 <Search class="h-4 w-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -409,42 +435,90 @@ export default function App() {
                 />
               </div>
 
-              <label class="flex items-center gap-2 cursor-pointer text-xs font-medium bg-zinc-950 border border-zinc-800 px-3 py-2 rounded-lg hover:border-zinc-700 transition">
+              <label class="flex items-center gap-2 cursor-pointer text-xs font-medium bg-zinc-950 border border-zinc-800 px-3 py-2 rounded-lg hover:border-zinc-700 transition shrink-0">
                 <input
                   type="checkbox"
                   checked={remoteOnly()}
                   onChange={(e) => setRemoteOnly(e.currentTarget.checked)}
                   class="rounded border-zinc-700 text-cyan-500 focus:ring-0 bg-zinc-900"
                 />
-                <span class="text-zinc-300">Remote Only</span>
+                <span class="text-zinc-300">Remote</span>
               </label>
             </div>
 
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <button
-                onClick={() => setSelectedStack('ALL')}
-                class={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  selectedStack() === 'ALL'
-                    ? 'bg-cyan-500 text-zinc-950 font-bold shadow-md shadow-cyan-500/20'
-                    : 'bg-zinc-800/80 text-zinc-400 hover:text-white hover:bg-zinc-800'
-                }`}
-              >
-                All Tech
-              </button>
-              <For each={['Rust', 'Python', 'Agents', 'LLM', 'RAG', 'Postgres', 'Go']}>
-                {(stack) => (
-                  <button
-                    onClick={() => setSelectedStack(stack)}
-                    class={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
-                      selectedStack() === stack
-                        ? 'bg-cyan-500 text-zinc-950 font-bold shadow-md shadow-cyan-500/20'
-                        : 'bg-zinc-800/60 text-zinc-400 hover:text-white hover:bg-zinc-800'
-                    }`}
-                  >
-                    {stack}
-                  </button>
-                )}
-              </For>
+            {/* Stage & Tech Filters */}
+            <div class="flex items-center gap-3 flex-wrap">
+              {/* Stage Filter Buttons */}
+              <div class="flex items-center bg-zinc-950 border border-zinc-800 p-0.5 rounded-lg text-xs font-medium">
+                <button
+                  onClick={() => setStageFilter('ALL')}
+                  class={`px-2.5 py-1 rounded-md transition ${
+                    stageFilter() === 'ALL'
+                      ? 'bg-zinc-800 text-white font-bold'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  All Stages
+                </button>
+                <button
+                  onClick={() => setStageFilter('SEED')}
+                  class={`px-2.5 py-1 rounded-md transition flex items-center gap-1.5 ${
+                    stageFilter() === 'SEED'
+                      ? 'bg-emerald-600 text-white font-bold shadow-md shadow-emerald-600/30'
+                      : 'text-emerald-400 hover:bg-emerald-950/40'
+                  }`}
+                >
+                  <span>🌱 Just Raised Seed</span>
+                  <span class="bg-emerald-950 text-emerald-300 text-[10px] px-1.5 py-0.2 rounded-full border border-emerald-800">
+                    {
+                      leads().filter(
+                        (l) =>
+                          (l['Stage'] || '').includes('Seed') ||
+                          (l['Overview'] || '').toLowerCase().includes('seed') ||
+                          (l['Position'] || '').toLowerCase().includes('seed')
+                      ).length
+                    }
+                  </span>
+                </button>
+                <button
+                  onClick={() => setStageFilter('HIRING')}
+                  class={`px-2.5 py-1 rounded-md transition ${
+                    stageFilter() === 'HIRING'
+                      ? 'bg-zinc-800 text-white font-bold'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Active Hiring
+                </button>
+              </div>
+
+              {/* Tech Stack Filters */}
+              <div class="flex items-center gap-1 flex-wrap">
+                <button
+                  onClick={() => setSelectedStack('ALL')}
+                  class={`px-2.5 py-1 rounded-lg text-xs font-medium transition ${
+                    selectedStack() === 'ALL'
+                      ? 'bg-cyan-500 text-zinc-950 font-bold shadow-md shadow-cyan-500/20'
+                      : 'bg-zinc-800/80 text-zinc-400 hover:text-white hover:bg-zinc-800'
+                  }`}
+                >
+                  All Tech
+                </button>
+                <For each={['Rust', 'Python', 'Agents', 'LLM', 'RAG']}>
+                  {(stack) => (
+                    <button
+                      onClick={() => setSelectedStack(stack)}
+                      class={`px-2 py-1 rounded-lg text-xs font-medium transition ${
+                        selectedStack() === stack
+                          ? 'bg-cyan-500 text-zinc-950 font-bold shadow-md shadow-cyan-500/20'
+                          : 'bg-zinc-800/60 text-zinc-400 hover:text-white hover:bg-zinc-800'
+                      }`}
+                    >
+                      {stack}
+                    </button>
+                  )}
+                </For>
+              </div>
             </div>
           </div>
 
@@ -488,10 +562,21 @@ export default function App() {
                           class="hover:bg-zinc-800/40 cursor-pointer transition group"
                         >
                           <td class="py-3.5 px-4 font-semibold text-white">
-                            <div class="flex items-center gap-2">
-                              <span class="group-hover:text-cyan-400 transition">
+                            <div class="flex items-center gap-2 flex-wrap">
+                              <span class="group-hover:text-cyan-400 transition font-bold">
                                 {lead['Company Name']}
                               </span>
+                              <Show
+                                when={
+                                  (lead['Stage'] || '').includes('Seed') ||
+                                  (lead['Overview'] || '').toLowerCase().includes('seed') ||
+                                  (lead['Position'] || '').toLowerCase().includes('seed')
+                                }
+                              >
+                                <span class="text-[10px] bg-emerald-950/80 text-emerald-400 border border-emerald-700/60 px-1.5 py-0.2 rounded-md font-mono font-medium shadow-sm">
+                                  {lead['Stage'] && lead['Stage'].includes('Seed') ? lead['Stage'] : '🌱 Seed'}
+                                </span>
+                              </Show>
                               <Show when={lead['Website / Careers URL']}>
                                 <a
                                   href={lead['Website / Careers URL']}
@@ -616,9 +701,22 @@ export default function App() {
           >
             <div class="flex items-start justify-between border-b border-zinc-800 pb-4">
               <div>
-                <span class="text-xs font-mono uppercase tracking-wider text-cyan-400">
-                  Company Spotlight
-                </span>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono uppercase tracking-wider text-cyan-400">
+                    Company Spotlight
+                  </span>
+                  <Show
+                    when={
+                      (selectedLead()!['Stage'] || '').includes('Seed') ||
+                      (selectedLead()!['Overview'] || '').toLowerCase().includes('seed') ||
+                      (selectedLead()!['Position'] || '').toLowerCase().includes('seed')
+                    }
+                  >
+                    <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-700/80 px-2 py-0.5 rounded-full font-mono font-semibold">
+                      {selectedLead()!['Stage'] || '🌱 Just Raised Seed'}
+                    </span>
+                  </Show>
+                </div>
                 <h3 class="text-2xl font-bold text-white mt-1">
                   {selectedLead()!['Company Name']}
                 </h3>
@@ -632,6 +730,21 @@ export default function App() {
                 ✕ Close
               </button>
             </div>
+
+            <Show
+              when={
+                (selectedLead()!['Stage'] || '').includes('Seed') ||
+                (selectedLead()!['Overview'] || '').toLowerCase().includes('seed')
+              }
+            >
+              <div class="bg-emerald-950/40 border border-emerald-800/60 rounded-xl p-3 text-xs text-emerald-300 leading-relaxed flex items-start gap-2.5">
+                <span class="text-base">💡</span>
+                <div>
+                  <strong class="text-white block mb-0.5">High-Yield Seed Stage Opportunity:</strong>
+                  This company has newly secured capital and has immediate technical urgency. Reaching out directly to the founder offering founding engineering or system architecture help yields significantly higher responses than applying through job boards.
+                </div>
+              </div>
+            </Show>
 
             <div class="grid grid-cols-2 gap-3 text-xs">
               <div class="bg-zinc-950 border border-zinc-800/80 p-3 rounded-xl">

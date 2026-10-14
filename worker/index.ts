@@ -124,7 +124,7 @@ export default {
       if (url.pathname === '/api/leads' && request.method === 'GET') {
         const { results } = await env.ai_leads_db
           .prepare(
-            'SELECT company_name as "Company Name", position as "Position", location as "Location / Remote", contact_email as "Contact / Email", website_url as "Website / Careers URL", tech_stack as "Tech Stack", overview as "Overview" FROM leads ORDER BY id DESC'
+            'SELECT company_name as "Company Name", position as "Position", location as "Location / Remote", contact_email as "Contact / Email", website_url as "Website / Careers URL", tech_stack as "Tech Stack", overview as "Overview", stage as "Stage" FROM leads ORDER BY (CASE WHEN stage LIKE "%Seed%" THEN 0 ELSE 1 END), id DESC'
           )
           .all();
         return json({ leads: results });
@@ -144,56 +144,116 @@ export default {
 // Daily Scraper implementation inside Worker
 async function runScraper(env: Env) {
   try {
-    // Query latest HN hiring threads
+    let inserted = 0;
+
+    // 1. Query latest HN hiring threads
     const hnSearch = await fetch(
       'https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=Who%20is%20hiring&hitsPerPage=3'
     );
     const searchData: any = await hnSearch.json();
     const thread = searchData.hits?.[0];
-    if (!thread) return { error: 'No thread found' };
 
-    const commentsRes = await fetch(
-      `https://hn.algolia.com/api/v1/search?tags=comment,story_${thread.objectID}&hitsPerPage=500`
-    );
-    const commentsData: any = await commentsRes.json();
-    const comments = commentsData.hits || [];
+    if (thread) {
+      const commentsRes = await fetch(
+        `https://hn.algolia.com/api/v1/search?tags=comment,story_${thread.objectID}&hitsPerPage=500`
+      );
+      const commentsData: any = await commentsRes.json();
+      const comments = commentsData.hits || [];
 
-    let inserted = 0;
-    const keywords = ['ai', 'llm', 'agents', 'agentic', 'inference', 'rag', 'rust', 'distributed', 'pipeline'];
+      const keywords = ['ai', 'llm', 'agents', 'agentic', 'inference', 'rag', 'rust', 'distributed', 'pipeline'];
 
-    for (const c of comments) {
-      const rawText = c.comment_text || '';
-      const text = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      const lower = text.toLowerCase();
+      for (const c of comments) {
+        const rawText = c.comment_text || '';
+        const text = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const lower = text.toLowerCase();
 
-      if (!keywords.some((kw) => lower.includes(kw))) continue;
+        if (!keywords.some((kw) => lower.includes(kw))) continue;
 
-      const parts = text.split(/\||–|-/).map((p: string) => p.trim());
-      const company = parts[0]?.slice(0, 40) || 'Unknown';
-      const position = parts[1]?.slice(0, 60) || 'AI / Systems Engineer';
-      const location = parts[2]?.slice(0, 50) || 'Remote / Worldwide';
+        const parts = text.split(/\||–|-/).map((p: string) => p.trim());
+        const company = parts[0]?.slice(0, 40) || 'Unknown';
+        const position = parts[1]?.slice(0, 60) || 'AI / Systems Engineer';
+        const location = parts[2]?.slice(0, 50) || 'Remote / Worldwide';
 
-      const emailMatch = text.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/);
-      const urlMatch = text.match(/https?:\/\/[^\s<>"]+/);
+        const emailMatch = text.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/);
+        const urlMatch = text.match(/https?:\/\/[^\s<>"]+/);
 
-      const contact_email = emailMatch ? emailMatch[1] : '';
-      const website_url = urlMatch ? urlMatch[0] : '';
-      const overview = text.slice(0, 250);
+        const contact_email = emailMatch ? emailMatch[1] : '';
+        const website_url = urlMatch ? urlMatch[0] : '';
+        const overview = text.slice(0, 250);
 
-      const stacks: string[] = [];
-      for (const s of ['rust', 'python', 'go', 'postgres', 'clickhouse', 'kafka', 'aws', 'llm', 'rag', 'agents']) {
-        if (lower.includes(s)) stacks.push(s.toUpperCase());
+        let stage = 'Active Hiring';
+        if (/\b(seed|pre-seed)\b/i.test(text)) {
+          stage = '🌱 Just Raised Seed';
+        } else if (/\b(series\s+a)\b/i.test(text)) {
+          stage = '🚀 Series A';
+        }
+
+        const stacks: string[] = [];
+        for (const s of ['rust', 'python', 'go', 'postgres', 'clickhouse', 'kafka', 'aws', 'llm', 'rag', 'agents']) {
+          if (lower.includes(s)) stacks.push(s.toUpperCase());
+        }
+        const tech_stack = stacks.join(', ');
+
+        await env.ai_leads_db
+          .prepare(
+            'INSERT INTO leads (company_name, position, location, contact_email, website_url, tech_stack, overview, stage) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(company_name) DO UPDATE SET stage=excluded.stage, updated_at=CURRENT_TIMESTAMP'
+          )
+          .bind(company, position, location, contact_email, website_url, tech_stack, overview, stage)
+          .run();
+
+        inserted++;
       }
-      const tech_stack = stacks.join(', ');
+    }
 
-      await env.ai_leads_db
-        .prepare(
-          'INSERT OR REPLACE INTO leads (company_name, position, location, contact_email, website_url, tech_stack, overview) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        )
-        .bind(company, position, location, contact_email, website_url, tech_stack, overview)
-        .run();
+    // 2. Query Seed / Pre-Seed funding announcements
+    const seedQueries = ['raised seed AI', 'seed round AI', 'pre-seed AI', 'closes seed AI', 'YC AI seed'];
+    for (const sq of seedQueries) {
+      try {
+        const sRes = await fetch(
+          `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(sq)}&tags=story&hitsPerPage=25`
+        );
+        const sData: any = await sRes.json();
+        for (const h of sData.hits || []) {
+          const title = h.title || '';
+          const storyText = h.story_text || '';
+          const urlLink = h.url || '';
+          const combined = `${title} ${storyText}`;
 
-      inserted++;
+          let comp: string | null = null;
+          let roundTag = '🌱 Just Raised Seed';
+
+          const m1 = title.match(/^(?:Show HN:\s*)?([A-Z][a-zA-Z0-9\.\-_]{1,30}(?:\s+[A-Z][a-zA-Z0-9\.\-_]{1,20}){0,2})\s+(?:raises|raised|closes|secures)\s+(\$?[0-9]+(?:\.[0-9]+)?[mMbB]?\s*(?:pre-seed|seed|round)?)/i);
+          const m2 = title.match(/^(?:Show HN:\s*)?([A-Z][a-zA-Z0-9\.\-_]{1,30})\s*\((?:\$?[0-9]+(?:\.[0-9]+)?[mMbB]?\s*)?(?:pre-seed|seed)/i);
+
+          if (m1) {
+            comp = m1[1].trim();
+            roundTag = `🌱 ${m1[2].trim()}`;
+          } else if (m2) {
+            comp = m2[1].trim();
+          } else if (urlLink && /seed/i.test(title)) {
+            const dm = urlLink.match(/https?:\/\/(?:www\.)?([a-zA-Z0-9\-]+)\./);
+            if (dm && !['techcrunch', 'venturebeat', 'wsj', 'bloomberg', 'forbes', 'medium', 'substack', 'github', 'youtube', 'x', 'twitter'].includes(dm[1].toLowerCase())) {
+              comp = dm[1].charAt(0).toUpperCase() + dm[1].slice(1);
+            }
+          }
+
+          if (!comp || comp.length < 2 || ['Show HN', 'Ask HN', 'How I', 'We', 'My Friend'].includes(comp)) continue;
+
+          const emailMatch = combined.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/);
+          const contact = emailMatch ? emailMatch[1] : '';
+          const website = urlLink || `https://${comp.toLowerCase()}.ai`;
+          const overview = (storyText || title).replace(/<[^>]+>/g, ' ').slice(0, 250);
+
+          await env.ai_leads_db
+            .prepare(
+              'INSERT INTO leads (company_name, position, location, contact_email, website_url, tech_stack, overview, stage) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(company_name) DO UPDATE SET stage=excluded.stage, updated_at=CURRENT_TIMESTAMP'
+            )
+            .bind(comp, 'Founding AI / Systems Engineer', 'Remote / US / Global', contact, website, 'LLM, Python, Cloud', overview, roundTag)
+            .run();
+
+          inserted++;
+        }
+      } catch {}
     }
 
     return { success: true, newLeadsInserted: inserted };
